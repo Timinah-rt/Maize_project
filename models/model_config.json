@@ -1,0 +1,41 @@
+{
+  "feat_cols": [
+    "temperature_2m_mean",
+    "rain_sum",
+    "price_lag_1w",
+    "price_lag_2w",
+    "price_lag_4w",
+    "price_lag_8w",
+    "price_lag_12w",
+    "price_ma_4w",
+    "price_std_4w",
+    "price_ma_8w",
+    "price_std_8w",
+    "price_ma_12w",
+    "price_std_12w",
+    "month",
+    "is_long_rains",
+    "is_short_rains",
+    "is_harvest",
+    "is_producer",
+    "is_consumer",
+    "rain_sum_4w",
+    "temp_avg_4w",
+    "rain_sum_8w",
+    "temp_avg_8w",
+    "week_of_year",
+    "year",
+    "days_from_start",
+    "price_change_lag_1w",
+    "price_change_lag_2w",
+    "price_change_ma_4w",
+    "price_change_std_4w"
+  ],
+  "dummy_cols": [
+    "c_Kiambu",
+    "c_Kirinyaga",
+    "c_Mombasa",
+    "c_Nairobi",
+    "c_Uasin-Gishu"
+  ]
+}
