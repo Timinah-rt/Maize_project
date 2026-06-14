@@ -14,7 +14,7 @@ FORECAST_WEEKS = 8
 
 TARGET_COUNTIES = ["Kiambu", "Kirinyaga", "Mombasa", "Nairobi", "Uasin-Gishu"]
 
-st.set_page_config(page_title="Maize Price Forecast", page_icon="🌽", layout="wide")
+st.set_page_config(page_title="Maize Price Guide - Kenya", page_icon="🌽", layout="wide")
 
 
 # ── Cached loads ──────────────────────────────────────────────────────────
@@ -35,15 +35,7 @@ def load_config():
         return json.load(f)
 
 
-@st.cache_resource
-def load_results():
-    path = MODELS_DIR / "model_evaluation.csv"
-    if path.exists():
-        return pd.read_csv(path)
-    return None
-
-
-# ── Feature helpers ───────────────────────────────────────────────────────
+# ── Forecast engine (unchanged) ───────────────────────────────────────────
 
 def prepare_county_features(cd):
     df = cd.sort_values("week_start").copy()
@@ -66,8 +58,6 @@ def build_dummy_row(county, dummy_cols):
         row[col] = 1
     return row
 
-
-# ── Forecast engine ──────────────────────────────────────────────────────
 
 def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
     feat_cols, dummy_cols = config["feat_cols"], config["dummy_cols"]
@@ -109,262 +99,404 @@ def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
     return sim["price"].iloc[-n_weeks:].values
 
 
-def forecast_with_ci(model, panel, county, config, n_weeks, n_sims=200):
+def forecast_with_ci(model, panel, county, config, n_weeks, noise_std=0.8, z=1.28):
     best = forecast_single_path(model, panel, county, config, n_weeks, noise_std=0)
-    paths = np.zeros((n_sims, n_weeks))
-    for s in range(n_sims):
-        paths[s] = forecast_single_path(model, panel, county, config, n_weeks, noise_std=0.8)
-    lo = np.percentile(paths, 10, axis=0)
-    hi = np.percentile(paths, 90, axis=0)
+    ci_band = noise_std * z * np.sqrt(np.arange(1, n_weeks + 1))
+    lo = best - ci_band
+    hi = best + ci_band
     return best, lo, hi
 
 
-# ── Feature importance ────────────────────────────────────────────────────
+# ── Plain-language helpers ────────────────────────────────────────────────
 
-def get_feature_importance(model, config):
-    try:
-        names = model.get_booster().feature_names
-        scores = model.feature_importances_
-        imp = pd.DataFrame({"feature": names, "importance": scores}).sort_values("importance", ascending=False)
-        return imp.head(15)
-    except Exception:
-        return None
+def price_signal(current_price, forecast, lo, hi):
+    avg_fc = np.mean(forecast)
+    pct_change = (avg_fc - current_price) / current_price * 100
+    if pct_change > 3:
+        return "📈 Rising", f"Prices expected to rise about {pct_change:.0f}% — good time to sell if you're a farmer, buy now if you're a consumer", "#dc2626"
+    elif pct_change < -3:
+        return "📉 Falling", f"Prices expected to drop about {abs(pct_change):.0f}% — wait if buying, sell now if you're a farmer", "#16a34a"
+    else:
+        return "➡️ Stable", f"Prices expected to stay steady (within {abs(pct_change):.0f}%) — no urgent action needed", "#2563eb"
 
 
-# ── Seasonal pattern ──────────────────────────────────────────────────────
+def best_time_advice(seas):
+    if seas.empty:
+        return "Not enough data"
+    peak = seas.loc[seas["avg_price"].idxmax()]
+    trough = seas.loc[seas["avg_price"].idxmin()]
+    month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return {
+        "best_sell_month": month_names[int(peak["month"])],
+        "best_sell_price": f"KES {peak['avg_price']:.0f}",
+        "best_buy_month": month_names[int(trough["month"])],
+        "best_buy_price": f"KES {trough['avg_price']:.0f}",
+        "peak_month": month_names[int(peak["month"])],
+        "trough_month": month_names[int(trough["month"])],
+    }
 
-def get_seasonal(panel, county):
-    cd = panel[panel["county"] == county].dropna(subset=["price"]).copy()
-    cd["month"] = pd.to_datetime(cd["week_start"]).dt.month
-    seas = cd.groupby("month")["price"].agg(["mean", "std", "count"]).reset_index()
-    seas.columns = ["month", "avg_price", "std_price", "n"]
-    return seas
+
+def county_ranking(panel, forecast_results):
+    rows = []
+    for c in TARGET_COUNTIES:
+        cd = panel[panel["county"] == c].dropna(subset=["price"])
+        if cd.empty:
+            continue
+        curr = cd["price"].iloc[-1]
+        fc = forecast_results.get(c)
+        if fc is not None:
+            best_path = fc[0]
+            fc_change = best_path[-1] - curr
+            rows.append({"County": c, "Current Price": f"KES {curr:.0f}",
+                         "Forecast Trend": "Rising" if fc_change > 0 else "Falling" if fc_change < 0 else "Stable",
+                         "Price (forecast)": f"KES {best_path[-1]:.0f}"})
+        else:
+            rows.append({"County": c, "Current Price": f"KES {curr:.0f}",
+                         "Forecast Trend": "—", "Price (forecast)": "—"})
+    return pd.DataFrame(rows)
+
+
+def seasonal_chart_advice(seas):
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    now = pd.Timestamp.now().month
+    current_avg = seas.loc[seas["month"] == now, "avg_price"].values
+    current_avg = current_avg[0] if len(current_avg) > 0 else None
+    text_parts = []
+    for i, row in seas.iterrows():
+        m = int(row["month"])
+        label = month_names[m - 1]
+        emoji = "🔴" if row["avg_price"] > seas["avg_price"].mean() else "🟢"
+        text_parts.append(f"{emoji} **{label}**: KES {row['avg_price']:.0f}")
+    return text_parts
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
-    st.title("🌽 Maize Price Analysis")
-    st.markdown("---")
+    st.title("🌽 Maize Price Guide for Kenya")
+    st.markdown("_Simple price forecasts to help farmers, traders, and families plan ahead_")
 
     panel = load_data()
     model = load_model()
     config = load_config()
-    results = load_results()
-    feat_imp = get_feature_importance(model, config)
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        county = st.sidebar.selectbox("County", TARGET_COUNTIES)
+        county = st.sidebar.selectbox("Your County", TARGET_COUNTIES)
     with col2:
-        weeks = st.sidebar.slider("Forecast horizon", 4, 12, FORECAST_WEEKS)
+        weeks = st.sidebar.slider("Look ahead (weeks)", 4, 12, FORECAST_WEEKS)
 
     cd = panel[panel["county"] == county].sort_values("week_start").dropna(subset=["price"])
+    if cd.empty:
+        st.error(f"No data available for {county}")
+        return
 
-    def min_date():
-        return cd["week_start"].min()
-    def max_date():
-        return cd["week_start"].max()
-    def curr_price():
-        return cd["price"].iloc[-1]
-    def prev_price():
-        return cd["price"].iloc[-2] if len(cd) >= 2 else curr_price()
-    def chg_1w():
-        return curr_price() - prev_price()
+    # Compute seasonal patterns once
+    def get_seasonal():
+        cd2 = panel[panel["county"] == county].dropna(subset=["price"]).copy()
+        cd2["month"] = pd.to_datetime(cd2["week_start"]).dt.month
+        seas = cd2.groupby("month")["price"].agg(["mean", "std", "count"]).reset_index()
+        seas.columns = ["month", "avg_price", "std_price", "n"]
+        all_months = pd.DataFrame({"month": range(1, 13)})
+        seas = all_months.merge(seas, on="month", how="left").fillna(0)
+        return seas
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🌦 Seasonality", "🔍 Drivers", "📈 Model Performance"])
+    seas = get_seasonal()
 
-    # ════════════════════════════════════════════════════════════════
-    # TAB 1 — OVERVIEW
-    # ════════════════════════════════════════════════════════════════
+    # ── Sidebar KPI cards ──────────────────────────────────────────────────
+    curr_price = cd["price"].iloc[-1]
+    prev_price = cd["price"].iloc[-2] if len(cd) >= 2 else curr_price
+    chg_1w = curr_price - prev_price
+    trend_4w = curr_price - cd["price"].iloc[-5] if len(cd) >= 5 else 0
+    price_min = cd["price"].min()
+    price_max = cd["price"].max()
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"### {county} Now")
+    st.sidebar.metric("Current Price", f"KES {curr_price:.0f}", f"{chg_1w:+.1f} / wk")
+    st.sidebar.metric("4-Week Trend", f"{'▲' if trend_4w > 0 else '▼'} KES {abs(trend_4w):.1f}")
+    st.sidebar.metric("Range (all time)", f"KES {price_min:.0f} – KES {price_max:.0f}")
+
+    # Generate forecasts for all counties (for market comparison)
+    @st.cache_data(ttl=300)
+    def get_all_forecasts(weeks):
+        results = {}
+        for c in TARGET_COUNTIES:
+            cdata = panel[panel["county"] == c].dropna(subset=["price"])
+            if len(cdata) < 10:
+                continue
+            try:
+                results[c] = forecast_with_ci(model, panel, c, config, weeks)
+            except Exception:
+                pass
+        return results
+
+    with st.spinner("Generating forecasts across all markets..."):
+        all_fc = get_all_forecasts(weeks)
+
+    # My county forecast
+    my_fc = all_fc.get(county)
+    if my_fc is None:
+        st.warning("Could not generate forecast for this county")
+        return
+
+    best_path, ci_lo, ci_hi = my_fc
+    max_date = cd["week_start"].max()
+    fc_dates = [max_date + timedelta(weeks=i + 1) for i in range(weeks)]
+    signal_text, signal_desc, signal_color = price_signal(curr_price, best_path, ci_lo, ci_hi)
+
+    # ══════════════════════════════════════════════════════════════════════
+    tab1, tab2, tab3 = st.tabs(["📈 Price Forecast", "🏪 Compare Markets", "🗓 Best Time & Tips"])
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB 1 — PRICE FORECAST (user-friendly)
+    # ══════════════════════════════════════════════════════════════════════
     with tab1:
-        k1, k2, k3, k4 = st.columns(4)
-        trend_4w = curr_price() - cd["price"].iloc[-5] if len(cd) >= 5 else 0
-        k1.metric("Current Price", f"KES {curr_price():.0f}", f"{chg_1w():+.1f} / wk")
-        k2.metric("4-Week Trend", f"{'▲' if trend_4w > 0 else '▼'}  KES {abs(trend_4w):.1f}", f"{trend_4w / 4:+.1f} avg/wk")
-        k3.metric("Date Range", f"{min_date().strftime('%b %Y')} – {max_date().strftime('%b %Y')}")
-        k4.metric("Volatility (σ)", f"KES {cd['price'].std():.1f}")
+        st.markdown(f"## Price outlook for **{county}**")
 
-        with st.spinner("Generating forecast..."):
-            best_path, ci_lo, ci_hi = forecast_with_ci(model, panel, county, config, weeks)
+        # Signal banner
+        st.markdown(
+            f"<div style='padding:1rem;border-radius:8px;background:{signal_color}15;"
+            f"border-left:5px solid {signal_color}'>"
+            f"<h3 style='margin:0;color:{signal_color}'>{signal_text}</h3>"
+            f"<p style='margin:0.5rem 0 0 0;font-size:1.05rem'>{signal_desc}</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-        fc_dates = [max_date() + timedelta(weeks=i + 1) for i in range(weeks)]
-
+        # Forecast chart
         fig, ax = plt.subplots(figsize=(14, 5))
-        ax.plot(cd["week_start"], cd["price"], color="#2563eb", linewidth=1.2, label="Historical")
+        ax.plot(cd["week_start"], cd["price"], color="#2563eb", linewidth=1.5, label="Past prices")
         ax.fill_between(cd["week_start"], cd["price"], alpha=0.06, color="#2563eb")
-
-        ax.fill_between(fc_dates, ci_lo, ci_hi, color="#dc2626", alpha=0.18, label="50–90% CI")
-        ax.plot(fc_dates, best_path, color="#dc2626", linewidth=2, linestyle="--", marker="o", label="Forecast (median)")
-
-        bridge_x = [max_date(), fc_dates[0]]
-        bridge_y = [curr_price(), best_path[0]]
+        ax.fill_between(fc_dates, ci_lo, ci_hi, color="#dc2626", alpha=0.18, label="Possible range")
+        ax.plot(fc_dates, best_path, color="#dc2626", linewidth=2.5, linestyle="--", marker="o", label="Forecast")
+        bridge_x = [max_date, fc_dates[0]]
+        bridge_y = [curr_price, best_path[0]]
         ax.plot(bridge_x, bridge_y, color="#dc2626", linewidth=1, linestyle=":")
 
-        ax.axhline(y=curr_price(), color="#dc2626", linewidth=0.7, linestyle=":", alpha=0.3)
+        ax.axhline(y=curr_price, color="#dc2626", linewidth=0.7, linestyle=":", alpha=0.3)
         ax.set_ylabel("Price (KES)")
+        ax.set_title(f"Maize price forecast — {county}")
         ax.legend(frameon=True, fancybox=True, loc="upper left")
         ax.grid(True, alpha=0.15)
         plt.xticks(rotation=45)
         st.pyplot(fig)
 
+        # Simple forecast table
         fc_df = pd.DataFrame({
-            "Week": [d.strftime("%Y-%m-%d") for d in fc_dates],
-            "Forecast (KES)": best_path.round(1),
-            "Δ": np.diff([curr_price()] + list(best_path)).round(2),
-            "CI Low (KES)": ci_lo.round(1),
-            "CI High (KES)": ci_hi.round(1),
+            "Week ending": [d.strftime("%d %b %Y") for d in fc_dates],
+            "Expected Price": [f"KES {p:.0f}" for p in best_path],
+            "Change from now": [f"{'▲' if d > 0 else '▼'} KES {abs(d):.1f}" if abs(d) > 0.1 else "—" for d in np.diff([curr_price] + list(best_path))],
+            "Possible low": [f"KES {l:.0f}" for l in ci_lo],
+            "Possible high": [f"KES {h:.0f}" for h in ci_hi],
         })
         st.dataframe(fc_df, hide_index=True, use_container_width=True)
 
-    # ════════════════════════════════════════════════════════════════
-    # TAB 2 — SEASONALITY  (Descriptive)
-    # ════════════════════════════════════════════════════════════════
+        st.caption(f"The 'Possible range' column shows what prices could be in 9 out of 10 scenarios. "
+                   f"Based on past data and current market conditions in {county}.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB 2 — MARKET COMPARISON (for farmers deciding where to sell/buy)
+    # ══════════════════════════════════════════════════════════════════════
     with tab2:
-        seas = get_seasonal(panel, county)
-        all_months = pd.DataFrame({"month": range(1, 13)})
-        seas = all_months.merge(seas, on="month", how="left").fillna(0)
+        st.markdown("## Compare prices across Kenyan markets")
+
+        rank_df = county_ranking(panel, all_fc)
+        st.markdown("### Current Prices by County")
+        st.dataframe(rank_df, hide_index=True, use_container_width=True)
+
+        # Highlight best/worst
+        current_prices = {}
+        for c in TARGET_COUNTIES:
+            cdata = panel[panel["county"] == c].dropna(subset=["price"])
+            if not cdata.empty:
+                current_prices[c] = cdata["price"].iloc[-1]
+
+        if current_prices:
+            best_sell = max(current_prices, key=current_prices.get)
+            best_buy = min(current_prices, key=current_prices.get)
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.markdown(
+                    f"<div style='padding:1rem;border-radius:8px;background:#16a34a15;"
+                    f"border-left:5px solid #16a34a'>"
+                    f"<h4 style='margin:0;color:#16a34a'>🏪 Best market to SELL</h4>"
+                    f"<p style='margin:0.3rem 0 0 0;font-size:1.2rem'><b>{best_sell}</b> — "
+                    f"KES {current_prices[best_sell]:.0f} per kg</p>"
+                    f"<p style='margin:0.2rem 0 0 0;font-size:0.9rem'>Highest price right now</p>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with col_b:
+                st.markdown(
+                    f"<div style='padding:1rem;border-radius:8px;background:#2563eb15;"
+                    f"border-left:5px solid #2563eb'>"
+                    f"<h4 style='margin:0;color:#2563eb'>🛒 Best market to BUY</h4>"
+                    f"<p style='margin:0.3rem 0 0 0;font-size:1.2rem'><b>{best_buy}</b> — "
+                    f"KES {current_prices[best_buy]:.0f} per kg</p>"
+                    f"<p style='margin:0.2rem 0 0 0;font-size:0.9rem'>Lowest price right now</p>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # Multi-county forecast comparison chart
+        st.markdown("### Price forecast across all counties")
+        fig2, ax2 = plt.subplots(figsize=(14, 5))
+        colors = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#8b5cf6"]
+        for idx, c in enumerate(TARGET_COUNTIES):
+            fc = all_fc.get(c)
+            if fc is None:
+                continue
+            best, _, _ = fc
+            cdata = panel[panel["county"] == c].dropna(subset=["price"])
+            if cdata.empty:
+                continue
+            last_date = cdata["week_start"].max()
+            fc_dates_c = [last_date + timedelta(weeks=i + 1) for i in range(weeks)]
+            bridge_x = [last_date, fc_dates_c[0]]
+            bridge_y = [cdata["price"].iloc[-1], best[0]]
+            ax2.plot(fc_dates_c, best, color=colors[idx % len(colors)], linewidth=2, marker="o", label=c)
+            ax2.plot(bridge_x, bridge_y, color=colors[idx % len(colors)], linewidth=1, linestyle=":")
+        ax2.set_ylabel("Price (KES)")
+        ax2.set_title("Forecast comparison across counties")
+        ax2.legend(frameon=True, fancybox=True, loc="best")
+        ax2.grid(True, alpha=0.15)
+        plt.xticks(rotation=45)
+        st.pyplot(fig2)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # TAB 3 — SEASONALITY + TIPS (plain language)
+    # ══════════════════════════════════════════════════════════════════════
+    with tab3:
+        st.markdown(f"## Best time to buy or sell in **{county}**")
+
+        advice = best_time_advice(seas)
+
+        if advice:
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                st.markdown(
+                    f"<div style='padding:1rem;border-radius:8px;background:#16a34a15;"
+                    f"border-left:5px solid #16a34a;text-align:center'>"
+                    f"<h4 style='margin:0;color:#16a34a'>🌾 Best month to SELL</h4>"
+                    f"<p style='margin:0.3rem 0 0 0;font-size:2rem'><b>{advice['best_sell_month']}</b></p>"
+                    f"<p style='margin:0;font-size:1.1rem'>Avg price: {advice['best_sell_price']}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with col_s2:
+                st.markdown(
+                    f"<div style='padding:1rem;border-radius:8px;background:#2563eb15;"
+                    f"border-left:5px solid #2563eb;text-align:center'>"
+                    f"<h4 style='margin:0;color:#2563eb'>🛒 Best month to BUY</h4>"
+                    f"<p style='margin:0.3rem 0 0 0;font-size:2rem'><b>{advice['best_buy_month']}</b></p>"
+                    f"<p style='margin:0;font-size:1.1rem'>Avg price: {advice['best_buy_price']}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # Monthly price chart
         month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        month_emojis = seasonal_chart_advice(seas)
+        mean_price = seas["avg_price"].mean()
 
-        fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4.5))
-
-        # Monthly average bar
-        colors = ["#2563eb"] * 12
-        ax1.bar(month_names, seas["avg_price"], color=colors, edgecolor="white", linewidth=0.5)
-        ax1.set_ylabel("Avg Price (KES)")
-        ax1.set_title(f"{county} — Monthly Average Price")
-        ax1.grid(axis="y", alpha=0.2)
+        fig3, ax3 = plt.subplots(figsize=(12, 4))
+        bar_colors = ["#16a34a" if r["avg_price"] <= mean_price else "#dc2626" for _, r in seas.iterrows()]
+        ax3.bar(month_names, seas["avg_price"], color=bar_colors, edgecolor="white", linewidth=0.5)
+        ax3.axhline(y=mean_price, color="#2563eb", linewidth=1, linestyle="--", label=f"Average: KES {mean_price:.0f}")
+        ax3.set_ylabel("Avg Price (KES)")
+        ax3.set_title(f"{county} — Monthly average maize price")
+        ax3.legend()
+        ax3.grid(axis="y", alpha=0.2)
         for i, (_, r) in enumerate(seas.iterrows()):
-            ax1.text(i, r["avg_price"] + 0.5, f"{r['avg_price']:.0f}", ha="center", fontsize=8)
+            ax3.text(i, r["avg_price"] + 0.3, f"{r['avg_price']:.0f}", ha="center", fontsize=9)
+        st.pyplot(fig3)
 
-        # Year-over-year (if multiple years)
+        with st.expander("📅 Month-by-month price guide"):
+            st.markdown(f"**Average price: KES {mean_price:.0f}**")
+            st.markdown("🟢 Green = below average (cheaper to buy)")
+            st.markdown("🔴 Red = above average (better to sell)")
+            for line in month_emojis:
+                st.markdown(line)
+
+        # Year-over-year
         cd2 = panel[panel["county"] == county].dropna(subset=["price"]).copy()
         cd2["year"] = pd.to_datetime(cd2["week_start"]).dt.year
         years = sorted(cd2["year"].unique())
         if len(years) > 1:
+            st.markdown("### Year-over-year comparison")
+            fig4, ax4 = plt.subplots(figsize=(12, 4))
             for yr in years:
                 yy = cd2[cd2["year"] == yr].copy()
                 yy["week_of_year"] = pd.to_datetime(yy["week_start"]).dt.isocalendar().week.astype(int)
                 yy = yy.sort_values("week_of_year")
-                ax2.plot(yy["week_of_year"], yy["price"], label=str(yr), linewidth=1.2)
-            ax2.set_xlabel("Week of Year")
-            ax2.set_ylabel("Price (KES)")
-            ax2.set_title("Year-over-Year Comparison")
-            ax2.legend(frameon=True, fancybox=True)
-            ax2.grid(True, alpha=0.15)
-        else:
-            ax2.text(0.5, 0.5, "Only one year of data", ha="center", va="center", transform=ax2.transAxes, fontsize=12)
-            ax2.set_title("Year-over-Year Comparison")
-
-        plt.tight_layout()
-        st.pyplot(fig2)
-
-        with st.expander("Descriptive Statistics"):
-            desc = cd["price"].describe().round(2).to_frame().T
-            desc.index = [county]
-            st.dataframe(desc, use_container_width=True)
-
-    # ════════════════════════════════════════════════════════════════
-    # TAB 3 — DRIVERS  (Diagnostic)
-    # ════════════════════════════════════════════════════════════════
-    with tab3:
-        col_d1, col_d2 = st.columns([1, 1])
-
-        with col_d1:
-            st.subheader("Feature Importance (Top 15)")
-            if feat_imp is not None:
-                fig3, ax3 = plt.subplots(figsize=(7, 5))
-                top15 = feat_imp.head(15)
-                imp_vals = top15["importance"].values
-                feat_names = [n[:28] + "…" if len(n) > 30 else n for n in top15["feature"]]
-                ax3.barh(range(len(imp_vals)), imp_vals, color="#2563eb", edgecolor="white")
-                ax3.set_yticks(range(len(imp_vals)))
-                ax3.set_yticklabels(feat_names, fontsize=8)
-                ax3.invert_yaxis()
-                ax3.set_xlabel("Importance")
-                ax3.set_title("What drives maize prices?")
-                ax3.grid(axis="x", alpha=0.2)
-                plt.tight_layout()
-                st.pyplot(fig3)
-            else:
-                st.warning("Feature importance not available")
-
-        with col_d2:
-            st.subheader("Current Feature Values")
-            last_row = cd.iloc[-1]
-            driver_cols = [c for c in ["cpi", "usd_kes", "inflation_rate",
-                                         "temp_avg_c", "rain_mm",
-                                         "price_lag_1w", "price_ma_4w"]
-                           if c in cd.columns]
-            drivers = last_row[driver_cols].to_frame().reset_index()
-            drivers.columns = ["Feature", "Current Value"]
-            drivers["Current Value"] = drivers["Current Value"].round(2)
-            st.dataframe(drivers, hide_index=True, use_container_width=True)
-
-        st.subheader("How key drivers relate to price")
-        driver_plot_cols = [c for c in ["cpi", "usd_kes", "inflation_rate", "temp_avg_c", "rain_mm"]
-                            if c in cd.columns]
-        n_drivers = len(driver_plot_cols)
-        if n_drivers > 0:
-            fig4, axes = plt.subplots(1, n_drivers, figsize=(4 * n_drivers, 3.5))
-            if n_drivers == 1:
-                axes = [axes]
-            for ax4, col in zip(axes, driver_plot_cols):
-                ax4.scatter(cd[col], cd["price"], alpha=0.5, s=15, color="#2563eb")
-                z = np.polyfit(cd[col].fillna(0), cd["price"].fillna(0), 1)
-                p = np.poly1d(z)
-                xv = np.linspace(cd[col].min(), cd[col].max(), 50)
-                ax4.plot(xv, p(xv), color="#dc2626", linewidth=1, linestyle="--")
-                ax4.set_xlabel(col)
-                ax4.set_ylabel("Price (KES)")
-                ax4.grid(True, alpha=0.15)
-            plt.tight_layout()
+                ax4.plot(yy["week_of_year"], yy["price"], label=str(yr), linewidth=1.5)
+            ax4.set_xlabel("Week of Year")
+            ax4.set_ylabel("Price (KES)")
+            ax4.set_title(f"{county} — Price trend by year")
+            ax4.legend(frameon=True, fancybox=True)
+            ax4.grid(True, alpha=0.15)
             st.pyplot(fig4)
 
-    # ════════════════════════════════════════════════════════════════
-    # TAB 4 — MODEL PERFORMANCE  (Diagnostic)
-    # ════════════════════════════════════════════════════════════════
-    with tab4:
-        st.subheader("Per-County Model Performance")
-        if results is not None:
-            pivot = results.groupby(["county", "model"]).agg(
-                MASE=("mase", "mean"),
-                Dir_Acc=("dir_acc", "mean"),
-                MAE_KES=("mae_price", "mean"),
-                sMAPE=("smape", "mean")
-            ).round(3).reset_index()
-            st.dataframe(pivot, hide_index=True, use_container_width=True)
+        # ── Tips section ──
+        st.markdown("---")
+        st.markdown("## 💡 Tips for farmers & buyers")
 
-            st.subheader("Best Model per County")
-            best = pivot.loc[pivot.groupby("county")["MASE"].idxmin()].reset_index(drop=True)
-            st.dataframe(best, hide_index=True, use_container_width=True)
-        else:
-            st.warning("No evaluation results found — run train.py first")
+        def trend_direction():
+            chg = best_path[-1] - curr_price
+            if chg > curr_price * 0.03:
+                return "rising", "sell", "buy now before prices go higher"
+            elif chg < -curr_price * 0.03:
+                return "falling", "wait for prices to stabilize", "wait — prices may drop further"
+            else:
+                return "stable", "your call — prices are steady", "no rush — prices are steady"
 
-        if results is not None:
-            st.subheader(f"Performance Summary — {county}")
-            cr = results[results["county"] == county]
-            if not cr.empty:
-                fig5, axes = plt.subplots(1, 3, figsize=(14, 3.5))
-                models_ = cr["model"].unique()
-                x = np.arange(len(models_))
-                width = 0.25
-                for ax5, metric, title, color in zip(
-                    axes, ["mase", "dir_acc", "mae_price"],
-                    ["MASE ↓", "Directional Accuracy ↑", "MAE (KES) ↓"],
-                    ["#2563eb", "#16a34a", "#dc2626"]
-                ):
-                    vals = [cr[cr["model"] == m][metric].mean() for m in models_]
-                    ax5.bar(x, vals, width, color=color, alpha=0.8, edgecolor="white")
-                    ax5.set_xticks(x)
-                    ax5.set_xticklabels([m[:12] + "…" if len(m) > 14 else m for m in models_], fontsize=8)
-                    ax5.set_title(title)
-                    ax5.grid(axis="y", alpha=0.2)
-                plt.tight_layout()
-                st.pyplot(fig5)
+        trend, farmer_advice, buyer_advice = trend_direction()
 
-    st.caption(f"Data: KAMIS / AgriBORA · Model: XGBoost on Δ-price · {weeks}-week horizon · CI from {200} simulations")
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            st.markdown(
+                f"<div style='padding:1rem;border-radius:8px;background:#fef3c7;"
+                f"border-left:5px solid #d97706;height:140px'>"
+                f"<h4 style='margin:0;color:#92400e'>👨‍🌾 For Farmers</h4>"
+                f"<p style='margin:0.5rem 0 0 0'>Prices are <b>{trend}</b> in {county}. "
+                f"<b>{farmer_advice.capitalize()}.</b></p>"
+                f"<p style='margin:0.3rem 0 0 0;font-size:0.9rem'>"
+                f"{'📈 Prices trending up — you may get better prices by waiting a few weeks' if trend == 'rising' else '📉 Prices trending down — sell sooner rather than later' if trend == 'falling' else '➡️ No strong trend — sell when convenient'}"
+                f"</p></div>",
+                unsafe_allow_html=True,
+            )
+        with col_t2:
+            st.markdown(
+                f"<div style='padding:1rem;border-radius:8px;background:#dbeafe;"
+                f"border-left:5px solid #2563eb;height:140px'>"
+                f"<h4 style='margin:0;color:#1e3a5f'>👪 For Families & Buyers</h4>"
+                f"<p style='margin:0.5rem 0 0 0'>In {county}, <b>{buyer_advice}.</b></p>"
+                f"<p style='margin:0.3rem 0 0 0;font-size:0.9rem'>"
+                f"{'📈 Better to buy now before prices rise further' if trend == 'rising' else '📉 Prices may drop further — consider waiting to buy' if trend == 'falling' else '➡️ Prices stable — buy when you need'}"
+                f"</p></div>",
+                unsafe_allow_html=True,
+            )
+
+        with st.expander("🔍 What drives maize prices? (simple explanation)"):
+            st.markdown("""
+            - **📊 Price momentum**: If prices rose last week, they tend to keep rising — this is the #1 predictor
+            - **🌧 Weather**: Heavy rains reduce supply, which pushes prices up
+            - **💰 Exchange rate**: When the Kenyan shilling weakens, imported food costs more
+            - **📈 Inflation**: General price increases affect maize too
+            - **🌾 Seasons**: Prices are lowest after harvests (Feb–Mar & Oct–Nov), highest during dry season (Jun–Jul)
+
+            The model uses all these factors together to make its predictions.
+            """)
+
+    # Footer
+    st.markdown("---")
+    st.caption(f"Data: KAMIS & AgriBORA · Powered by machine learning · "
+               f"Forecasts updated with latest available data · "
+               f"Past performance does not guarantee future results")
 
 
 if __name__ == "__main__":
