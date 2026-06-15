@@ -464,30 +464,26 @@ def main():
         with col_t1:
             st.markdown(
                 f"<div style='padding:1.2rem;border-radius:10px;background:#fff7ed;"
-                f"border:2px solid #ea580c;height:150px'>"
-                f"<h4 style='margin:0;color:#c2410c;font-size:1.1rem'>🌾 For Farmers</h4>"
+                f"border:2px solid #ea580c;max-height:170px;overflow-y:auto'>"
+                f"<h4 style='margin:0;color:#c2410c;font-size:1.1rem'>👨‍🌾 For Farmers</h4>"
                 f"<p style='margin:0.5rem 0 0 0;color:#000;font-size:1rem;font-weight:700'>"
                 f"Prices are <span style='background:{trend_bg[trend]};color:#fff;"
                 f"padding:0.1rem 0.5rem;border-radius:4px;font-size:1.1rem'>{trend_icon[trend]} {trend_txt[trend]}</span> "
-                f"in <b>{county}</b>.</p>"
-                f"<p style='margin:0.4rem 0 0 0;color:#9a3412;font-size:1.05rem;font-weight:800'>"
-                f"👉 <u>{farmer_advice.capitalize()}.</u></p>"
-                f"<p style='margin:0.4rem 0 0 0;color:#000;font-size:0.9rem'>"
-                f"{'📈 Prices trending up — waiting a few weeks may get you better prices' if trend == 'rising' else '📉 Prices trending down — sell sooner rather than later' if trend == 'falling' else '➡️ No strong trend — sell when convenient'}"
+                f"in {county}. <b>{farmer_advice.capitalize()}.</b></p>"
+                f"<p style='margin:0.3rem 0 0 0;color:#000;font-size:0.9rem'>"
+                f"{'📈 Prices trending up — you may get better prices by waiting a few weeks' if trend == 'rising' else '📉 Prices trending down — sell sooner rather than later' if trend == 'falling' else '➡️ No strong trend — sell when convenient'}"
                 f"</p></div>",
                 unsafe_allow_html=True,
             )
         with col_t2:
             st.markdown(
                 f"<div style='padding:1.2rem;border-radius:10px;background:#eff6ff;"
-                f"border:2px solid #2563eb;height:150px'>"
-                f"<h4 style='margin:0;color:#1d4ed8;font-size:1.1rem'>🛒 For Families & Buyers</h4>"
+                f"border:2px solid #2563eb;max-height:170px;overflow-y:auto'>"
+                f"<h4 style='margin:0;color:#1d4ed8;font-size:1.1rem'>👪 For Families & Buyers</h4>"
                 f"<p style='margin:0.5rem 0 0 0;color:#000;font-size:1rem;font-weight:700'>"
-                f"In <b>{county}</b>, "
-                f"<span style='background:{trend_bg[trend]};color:#fff;"
-                f"padding:0.1rem 0.5rem;border-radius:4px;font-size:1.05rem'>👉 {buyer_advice}.</span></p>"
-                f"<p style='margin:0.4rem 0 0 0;color:#000;font-size:0.9rem'>"
-                f"{'📈 Prices rising — buy now before they go higher' if trend == 'rising' else '📉 Prices falling — waiting may get you a better deal' if trend == 'falling' else '➡️ Prices stable — buy when you need'}"
+                f"In {county}, <b>{buyer_advice}.</b></p>"
+                f"<p style='margin:0.3rem 0 0 0;color:#000;font-size:0.9rem'>"
+                f"{'📈 Buy now before prices go higher' if trend == 'rising' else '📉 Prices may drop further — consider waiting to buy' if trend == 'falling' else '➡️ Prices stable — buy when you need'}"
                 f"</p></div>",
                 unsafe_allow_html=True,
             )
