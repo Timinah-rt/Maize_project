@@ -10,7 +10,7 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).parent.parent.parent
 MODELS_DIR = BASE_DIR / "models"
 FEATURES_DIR = BASE_DIR / "data" / "features"
-FORECAST_WEEKS = 8
+FORECAST_WEEKS = 24
 
 TARGET_COUNTIES = ["Kiambu", "Kirinyaga", "Mombasa", "Nairobi", "Uasin-Gishu"]
 
@@ -186,7 +186,7 @@ def main():
     with col1:
         county = st.sidebar.selectbox("Your County", TARGET_COUNTIES)
     with col2:
-        weeks = st.sidebar.slider("Look ahead (weeks)", 4, 12, FORECAST_WEEKS)
+        weeks = st.sidebar.slider("Look ahead (weeks)", 8, 30, FORECAST_WEEKS)
 
     cd = panel[panel["county"] == county].sort_values("week_start").dropna(subset=["price"])
     if cd.empty:
