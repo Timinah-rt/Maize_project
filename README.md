@@ -1,85 +1,146 @@
-# 🌽 Maize Price Forecasting Project
+# 🌽 Maize Price Forecasting
 
-A machine learning pipeline for forecasting maize prices in Kenya using historical price data and weather features.
+End-to-end machine learning pipeline for forecasting maize prices across Kenyan counties. Uses a pooled XGBoost model on price changes (Δ-price) trained with expanding window cross-validation, with per-county fine-tuning. Deployable via Streamlit Cloud.
+
+---
+
+## Quick Start
+
+```bash
+pip install -r requirements.txt
+python run.py                  # full pipeline: clean → features → train
+streamlit run src/dashboard/app.py   # launch dashboard
+```
+
+Or deploy on [Streamlit Cloud](https://streamlit.io/cloud) — point to `streamlit_app.py` (auto-imports the dashboard).
+
+---
 
 ## Project Structure
 
 ```
 maize-forecasting/
 ├── data/
-│   ├── raw/              # Original datasets
-│   ├── processed/        # Cleaned datasets
-│   └── features/         # Feature-engineered data
+│   ├── raw/                  # Original datasets (not committed)
+│   ├── processed/            # Cleaned datasets (not committed)
+│   └── features/             # panel_features.csv (committed)
 ├── src/
-│   ├── data/            # Data cleaning and feature modules
-│   │   ├── clean.py     # Data cleaning functions
-│   │   └── features.py  # Feature engineering
-│   ├── models/          # Model training and evaluation
-│   │   └── train.py     # Training pipeline
-│   └── dashboard/       # Streamlit dashboard
-│       └── app.py       # Visualization dashboard
-├── models/              # Trained model artifacts
-├── notebooks/           # Jupyter notebooks for exploration
-├── run.py              # Main pipeline runner
-└── requirements.txt    # Python dependencies
+│   ├── data/
+│   │   ├── clean.py          # Clean KAMIS, AgriBORA, weather data
+│   │   └── features.py       # Engineered features (lags, rolling stats, seasonals)
+│   ├── models/
+│   │   └── train.py          # Pooled XGBoost with expanding CV + fine-tuning
+│   └── dashboard/
+│       └── app.py            # Streamlit dashboard with 4 analysis tabs
+├── models/                   # Trained .pkl + config + evaluation CSV
+├── notebooks/                # Step-by-step pipeline notebook
+├── streamlit_app.py          # Root entry point for Streamlit Cloud
+├── run.py                    # Pipeline runner
+├── requirements.txt          # Python dependencies
+└── .gitignore
 ```
+
+---
 
 ## Datasets
 
-- **KAMIS**: Kenya Agricultural Market Information System prices (retail/wholesale)
-- **AgriBORA**: Transaction-based wholesale maize prices
-- **Weather**: Daily weather data for all Kenyan counties (2021-2025)
+| Source | Description | Coverage |
+|--------|-------------|----------|
+| **KAMIS** | Kenya Agricultural Market Information System — retail/wholesale prices | 2021–2025, 46 counties |
+| **AgriBORA** | Transaction-based wholesale maize prices | 2021–2025 |
+| **Weather** | Daily temperature, rainfall (Open-Meteo) | 2021–2025, all counties |
+| **Economic** | CPI, USD/KES exchange rate, inflation rate | 2021–2025 |
 
-## Quick Start
+---
 
-1. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Modeling Approach
 
-2. **Run the full pipeline:**
-   ```bash
-   python run.py
-   ```
+### Core Strategy
 
-3. **Launch the dashboard:**
-   ```bash
-   streamlit run src/dashboard/app.py
-   ```
+1. **Target**: Δ-price (week-over-week change) — removes autocorrelation, makes persistence baseline predict zero
+2. **Pooled XGBoost**: Single model trained on all 46 counties simultaneously using county one-hot encoding — allows information sharing across markets
+3. **Expanding Window CV**: 5 folds, each fold adds 20 more weeks of training data — robust evaluation across time
+4. **Fine-tuning**: Per-county XGBoost warm-started from the pooled model (optional, pooled model already captures county patterns via dummies)
 
-## Features
+### Features (30+)
 
-- **Data Cleaning**: Automated cleaning with outlier detection and missing value handling
-- **Feature Engineering**: Lag features, rolling statistics, seasonal flags, producer/consumer county classification
-- **Models**: Ridge, Random Forest, Gradient Boosting, XGBoost, SARIMA, LSTM
-- **Evaluation**: TimeSeriesSplit validation, MAE/RMSE/MAPE/R2 metrics
-- **Dashboard**: Interactive visualization of historical prices and forecasts
+- **Price lags**: 1, 2, 4, 8, 12 weeks
+- **Δ-price features**: lags + rolling mean/std (4-week window)
+- **Rolling statistics**: 4-, 8-, 12-week MA and std
+- **Weather**: temperature (mean/max/min), rainfall, wind, 4/8-week aggregates
+- **Economic**: CPI, USD/KES exchange rate, inflation rate
+- **Temporal**: month, week_of_year, year, days_from_start
+- **County dummies**: 46 one-hot encoded county indicators
+
+### Metrics
+
+| Metric | Interpretation |
+|--------|---------------|
+| **MASE** | Mean Absolute Scaled Error — compares to persistence (< 1 = beats "no change") |
+| **Dir Acc** | Directional accuracy — % of weeks where up/down is correctly predicted |
+| **MAE (KES)** | Mean Absolute Error on the original price scale |
+| **sMAPE** | Symmetric Mean Absolute Percentage Error |
+
+### Results (across 5 folds)
+
+| Model | MASE | Dir Acc | MAE (KES) | sMAPE |
+|-------|:---:|:-------:|:---------:|:-----:|
+| Persistence | 0.63 | 0% | 2.89 | 7.15% |
+| **Pooled XGBoost** | **0.32** | **76%** | **2.07** | **5.10%** |
+
+MASE < 1 for all models — ML consistently beats persistence.
+
+---
+
+## Dashboard
+
+The Streamlit dashboard has 4 tabs:
+
+| Tab | Type | Content |
+|-----|------|---------|
+| **📊 Overview** | Predictive | Price history + 4–12 week forecast with 50–90% confidence bands, forecast table with Δ |
+| **🌦 Seasonality** | Descriptive | Monthly average prices, year-over-year comparison, descriptive statistics |
+| **🔍 Drivers** | Diagnostic | Top 15 feature importance, current feature values, scatter plots (CPI/USD/weather vs price) |
+| **📈 Performance** | Diagnostic | MASE/Dir Acc/MAE/sMAPE per model per county, best-model-per-county table, bar charts |
+
+---
 
 ## Target Counties
 
-- Kiambu
-- Kirinyaga
-- Mombasa
-- Nairobi
-- Uasin-Gishu
+Kiambu · Kirinyaga · Mombasa · Nairobi · Uasin-Gishu
 
-## Improvements Made
+The pooled model was trained on all 46 counties; the dashboard shows the 5 most data-rich.
 
-✅ Fixed `kais_clean` typo in original notebook  
-✅ Removed redundant weather cleaning code  
-✅ Added lag/rolling features (1, 2, 4, 8, 12 weeks)  
-✅ Added maize season flags (long rains, short rains, harvest)  
-✅ Added producer/consumer county classification  
-✅ Modularized code into reusable scripts  
-✅ Implemented multiple model types with hyperparameter tuning  
-✅ Added TimeSeriesSplit for proper validation  
-✅ Built Streamlit dashboard for visualization  
-✅ Added model evaluation with metrics comparison  
+---
 
-## Next Steps
+## Deployment
 
-- Add SHAP interpretability analysis
-- Add 95% prediction intervals
-- Source Kenya CPI and USD-KES exchange rate data
-- Ensemble top-performing models
-- Add naive baselines (persistence, seasonal naive) for benchmark
+```bash
+git commit -m "Initial commit"
+git remote add origin https://github.com/YOUR_USERNAME/maize-forecasting.git
+git push -u origin main
+```
+
+Then on [streamlit.io/cloud](https://streamlit.io/cloud): **New app** → select repo → main file path = `streamlit_app.py` → **Deploy**.
+
+---
+
+## Pipeline Runner
+
+```bash
+python run.py
+```
+
+Runs sequentially: `clean.py` → `features.py` → `train.py` → prints summary.
+
+---
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/models/train.py` | Full training pipeline: Δ-price, pooled XGBoost, 5-fold expanding CV, per-county fine-tuning |
+| `src/dashboard/app.py` | Streamlit app with 4-tab analysis dashboard |
+| `streamlit_app.py` | Root entry point for Streamlit Cloud |
+| `src/data/features.py` | Feature engineering: lags, rolling stats, seasonal flags |
+| `notebooks/pipeline_step_by_step.ipynb` | Complete walkthrough notebook |
