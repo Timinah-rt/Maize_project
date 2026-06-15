@@ -66,6 +66,12 @@ def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
     sim = cd.tail(20).copy()
     sim = prepare_county_features(sim)
 
+    last_actual_change = sim["price_change"].iloc[-1]
+    last_actual_lag1 = sim["price_change_lag_1w"].iloc[-1]
+    last_actual_lag2 = sim["price_change_lag_2w"].iloc[-1]
+    last_actual_ma4 = sim["price_change_ma_4w"].iloc[-1]
+    last_actual_std4 = sim["price_change_std_4w"].iloc[-1]
+
     for i in range(n_weeks):
         next_date = last_date + timedelta(weeks=i + 1)
         feats = build_feature_row(sim, len(sim) - 1, feat_cols)
@@ -81,6 +87,11 @@ def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
         new_row = sim.iloc[-1:].copy()
         new_row["week_start"] = next_date
         new_row["price"] = next_price
+        new_row["price_change"] = delta_pred
+        new_row["price_change_lag_1w"] = last_actual_lag1
+        new_row["price_change_lag_2w"] = last_actual_lag2
+        new_row["price_change_ma_4w"] = last_actual_ma4
+        new_row["price_change_std_4w"] = last_actual_std4
         for c in ["kamis_price", "kamis_std", "agri_price", "agri_std",
                    "temp_avg_c", "temp_max_c", "temp_min_c", "rain_mm",
                    "wind_speed_max_kmh", "usd_kes", "cpi", "inflation_rate",
@@ -94,7 +105,6 @@ def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
         new_row["season"] = "off_season"
 
         sim = pd.concat([sim, new_row], ignore_index=True)
-        sim = prepare_county_features(sim)
 
     return sim["price"].iloc[-n_weeks:].values
 
