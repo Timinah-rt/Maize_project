@@ -200,7 +200,9 @@ def main():
         seas = cd2.groupby("month")["price"].agg(["mean", "std", "count"]).reset_index()
         seas.columns = ["month", "avg_price", "std_price", "n"]
         all_months = pd.DataFrame({"month": range(1, 13)})
-        seas = all_months.merge(seas, on="month", how="left").fillna(0)
+        seas = all_months.merge(seas, on="month", how="left")
+        fill_val = seas["avg_price"].mean()
+        seas[["avg_price", "std_price", "n"]] = seas[["avg_price", "std_price", "n"]].fillna({"avg_price": fill_val, "std_price": 0, "n": 0})
         return seas
 
     seas = get_seasonal()
