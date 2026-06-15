@@ -13,7 +13,6 @@
     "price_std_8w",
     "price_ma_12w",
     "price_std_12w",
-    "month",
     "is_long_rains",
     "is_short_rains",
     "is_harvest",

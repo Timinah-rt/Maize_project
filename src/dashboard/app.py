@@ -458,26 +458,43 @@ def main():
 
         col_t1, col_t2 = st.columns(2)
         with col_t1:
+            trend_color = {'rising':'#22c55e','falling':'#ef4444','stable':'#f59e0b'}.get(trend,'#fff')
+            trend_icon  = {'rising':'🚀','falling':'🔻','stable':'➡️'}.get(trend,'')
+            badge_bg    = {'rising':'#166534','falling':'#991b1b','stable':'#92400e'}.get(trend,'#333')
+            detail = ('📈 <b style=color:#fde68a>Prices trending up</b> — you may get better prices by waiting a few weeks'
+                      if trend == 'rising' else
+                      '📉 <b style=color:#fca5a5>Prices trending down</b> — sell sooner rather than later'
+                      if trend == 'falling' else
+                      '➡️ <b style=color:#fde68a>No strong trend</b> — sell when convenient')
             st.markdown(
-                f"<div style='padding:1rem;border-radius:8px;background:#fef3c7;"
-                f"border-left:5px solid #d97706;height:140px'>"
-                f"<h4 style='margin:0;color:#92400e'>👨‍🌾 For Farmers</h4>"
-                f"<p style='margin:0.5rem 0 0 0'>Prices are <b>{trend}</b> in {county}. "
-                f"<b>{farmer_advice.capitalize()}.</b></p>"
-                f"<p style='margin:0.3rem 0 0 0;font-size:0.9rem'>"
-                f"{'📈 Prices trending up — you may get better prices by waiting a few weeks' if trend == 'rising' else '📉 Prices trending down — sell sooner rather than later' if trend == 'falling' else '➡️ No strong trend — sell when convenient'}"
-                f"</p></div>",
+                f"<div style='padding:1.2rem;border-radius:12px;"
+                f"background:linear-gradient(145deg,#f97316,#b45309);"
+                f"border-left:6px solid #fde68a;height:155px;box-shadow:0 4px 15px rgba(0,0,0,0.2)'>"
+                f"<h4 style='margin:0;color:#fef9c3;font-size:1.15rem;text-shadow:1px 1px 2px rgba(0,0,0,0.3)'>🌾 For Farmers</h4>"
+                f"<p style='margin:0.5rem 0 0 0;color:#fff;font-size:1.05rem;font-weight:700'>"
+                f"Prices are <span style='color:{trend_color};font-size:1.2rem;font-weight:900;text-shadow:0 0 6px {trend_color}80'>{trend_icon} {trend}</span> "
+                f"in {county}. <span style='color:#fff;background:{badge_bg};padding:0.15rem 0.6rem;border-radius:6px;font-weight:800;font-size:1.05rem;border:1px solid {trend_color}'>"
+                f"{farmer_advice.capitalize()}.</span></p>"
+                f"<p style='margin:0.5rem 0 0 0;color:#fef9c3;font-size:0.92rem'>"
+                f"{detail}</p></div>",
                 unsafe_allow_html=True,
             )
         with col_t2:
+            detail = ('📈 <b style=color:#bbf7d0>Better to buy now</b> before prices rise further'
+                      if trend == 'rising' else
+                      '📉 <b style=color:#bfdbfe>Prices may drop further</b> — consider waiting to buy'
+                      if trend == 'falling' else
+                      '➡️ <b style=color:#bbf7d0>Prices stable</b> — buy when you need')
             st.markdown(
-                f"<div style='padding:1rem;border-radius:8px;background:#dbeafe;"
-                f"border-left:5px solid #2563eb;height:140px'>"
-                f"<h4 style='margin:0;color:#1e3a5f'>👪 For Families & Buyers</h4>"
-                f"<p style='margin:0.5rem 0 0 0'>In {county}, <b>{buyer_advice}.</b></p>"
-                f"<p style='margin:0.3rem 0 0 0;font-size:0.9rem'>"
-                f"{'📈 Better to buy now before prices rise further' if trend == 'rising' else '📉 Prices may drop further — consider waiting to buy' if trend == 'falling' else '➡️ Prices stable — buy when you need'}"
-                f"</p></div>",
+                f"<div style='padding:1.2rem;border-radius:12px;"
+                f"background:linear-gradient(145deg,#2563eb,#1e3a5f);"
+                f"border-left:6px solid #93c5fd;height:155px;box-shadow:0 4px 15px rgba(0,0,0,0.2)'>"
+                f"<h4 style='margin:0;color:#bfdbfe;font-size:1.15rem;text-shadow:1px 1px 2px rgba(0,0,0,0.3)'>🛒 For Families & Buyers</h4>"
+                f"<p style='margin:0.5rem 0 0 0;color:#fff;font-size:1.05rem;font-weight:700'>"
+                f"In {county}, <span style='color:#60a5fa;background:#1e3a5f;padding:0.15rem 0.6rem;border-radius:6px;font-weight:800;font-size:1.05rem;border:1px solid #93c5fd'>"
+                f"{buyer_advice}.</span></p>"
+                f"<p style='margin:0.5rem 0 0 0;color:#bfdbfe;font-size:0.92rem'>"
+                f"{detail}</p></div>",
                 unsafe_allow_html=True,
             )
 
