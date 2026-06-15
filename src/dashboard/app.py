@@ -63,10 +63,13 @@ def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
     feat_cols, dummy_cols = config["feat_cols"], config["dummy_cols"]
     cd = panel[panel["county"] == county].sort_values("week_start").copy()
     last_date = cd["week_start"].max()
+
+    recent = cd.tail(20)["price"].diff().dropna()
+    trend_bias = recent.mean() if len(recent) > 0 else 0.0
+
     sim = cd.tail(20).copy()
     sim = prepare_county_features(sim)
 
-    last_actual_change = sim["price_change"].iloc[-1]
     last_actual_lag1 = sim["price_change_lag_1w"].iloc[-1]
     last_actual_lag2 = sim["price_change_lag_2w"].iloc[-1]
     last_actual_ma4 = sim["price_change_ma_4w"].iloc[-1]
@@ -80,7 +83,9 @@ def forecast_single_path(model, panel, county, config, n_weeks, noise_std=0):
         X = X.reindex(columns=list(feat_cols) + list(dummy_cols), fill_value=0)
 
         raw = model.predict(X)[0]
-        delta_pred = raw + np.random.normal(0, noise_std) if noise_std > 0 else raw
+        damp = 1 - (i / n_weeks) * 0.6
+        delta_pred = (raw - trend_bias) * damp
+        delta_pred = delta_pred + np.random.normal(0, noise_std) if noise_std > 0 else delta_pred
         last_price = sim["price"].iloc[-1]
         next_price = last_price + delta_pred
 
